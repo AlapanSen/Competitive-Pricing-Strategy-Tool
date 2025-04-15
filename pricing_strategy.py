@@ -159,9 +159,17 @@ class PricingStrategy:
                         # Load the model
                         model_path = os.path.join(self.models_dir, model_file)
                         with open(model_path, 'rb') as f:
-                            model_data = pickle.load(f)
+                            model = pickle.load(f)
                             
-                        # Load metrics
+                        # In flat file structure, create a wrapper object with model and scaler
+                        from sklearn.preprocessing import StandardScaler
+                        model_data = {
+                            'model': model,
+                            'scaler': StandardScaler(),  # Default scaler
+                            'is_log_price': False  # Default value
+                        }
+                        
+                        # Load metrics if they exist
                         metrics_path = os.path.join(self.models_dir, f"{category}_metrics.json")
                         if os.path.exists(metrics_path):
                             with open(metrics_path, 'r') as f:
@@ -415,15 +423,21 @@ class PricingStrategy:
                 
                 logger.info(f"Using {len(model_features_df.columns)} features for prediction")
                 
-                # Properly handle feature names for sklearn 1.0+ compatibility
-                # Convert to array with matching feature names to prevent warnings
-                import warnings
-                with warnings.catch_warnings():
-                    warnings.filterwarnings("ignore", category=UserWarning)
-                    # Create a numpy array in the correct order
-                    input_array = model_features_df[expected_features].values
-                    # Scale the features
-                    features_array = scaler.transform(input_array)
+                # Check if scaler is properly fit
+                if not hasattr(scaler, 'mean_') or not hasattr(scaler, 'scale_'):
+                    # Scaler is not trained, just use the raw features
+                    logger.warning("Scaler is not trained, using raw features")
+                    features_array = model_features_df[expected_features].values
+                else:
+                    # Properly handle feature names for sklearn 1.0+ compatibility
+                    # Convert to array with matching feature names to prevent warnings
+                    import warnings
+                    with warnings.catch_warnings():
+                        warnings.filterwarnings("ignore", category=UserWarning)
+                        # Create a numpy array in the correct order
+                        input_array = model_features_df[expected_features].values
+                        # Scale the features
+                        features_array = scaler.transform(input_array)
                 
                 # Make prediction
                 predicted_value = model.predict(features_array)[0]
@@ -432,7 +446,14 @@ class PricingStrategy:
                 # Just use all features and hope they match
                 logger.warning("Model doesn't have feature_names_in_ attribute, using all features")
                 all_features = features_df.values
-                features_array = scaler.transform(all_features)
+                
+                # Check if scaler is properly fit
+                if not hasattr(scaler, 'mean_') or not hasattr(scaler, 'scale_'):
+                    features_array = all_features
+                    logger.warning("Scaler is not trained, using raw features")
+                else:
+                    features_array = scaler.transform(all_features)
+                
                 predicted_value = model.predict(features_array)[0]
             
             # If we used log transformation, convert back
