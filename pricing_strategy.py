@@ -126,12 +126,6 @@ class PricingStrategy:
         # Check if directory exists
         if not os.path.exists(self.models_dir):
             logger.error(f"Models directory does not exist: {self.models_dir}")
-            # Try to create it - this will help with debugging in Streamlit Cloud
-            try:
-                os.makedirs(self.models_dir, exist_ok=True)
-                logger.info(f"Created models directory: {self.models_dir}")
-            except Exception as e:
-                logger.error(f"Could not create models directory: {str(e)}")
             return
         
         # Find all categories with models
@@ -143,6 +137,7 @@ class PricingStrategy:
             logger.error(f"Error listing categories in {self.models_dir}: {str(e)}")
             return
         
+        successful_models = 0
         for category in categories:
             try:
                 # Load the model
@@ -150,8 +145,18 @@ class PricingStrategy:
                 logger.info(f"Looking for model file at: {model_path}")
                 
                 if os.path.exists(model_path):
-                    # Load model with version compatibility fix
-                    model_data = self._load_model_with_compatibility(model_path)
+                    # Load the model directly
+                    with open(model_path, 'rb') as f:
+                        model_data = pickle.load(f)
+                    
+                    # Verify model data is valid
+                    if model_data is None or 'model' not in model_data or 'scaler' not in model_data:
+                        logger.error(f"Invalid model data for {category} - missing required components")
+                        continue
+                        
+                    if model_data['model'] is None or model_data['scaler'] is None:
+                        logger.error(f"Invalid model data for {category} - model or scaler is None")
+                        continue
                         
                     # Load metrics
                     metrics_path = os.path.join(self.models_dir, category, 'metrics.json')
@@ -165,44 +170,16 @@ class PricingStrategy:
                     # Store in dictionaries
                     self.models[category] = model_data
                     self.metrics[category] = metrics
+                    successful_models += 1
                     
-                    logger.info(f"Loaded model for {category}")
+                    logger.info(f"Successfully loaded model for {category}")
                 else:
                     logger.warning(f"Model file does not exist: {model_path}")
             except Exception as e:
                 logger.error(f"Error loading model for {category}: {str(e)}")
         
-        logger.info(f"Loaded {len(self.models)} models out of {len(categories)} categories")
+        logger.info(f"Successfully loaded {successful_models} models out of {len(categories)} categories")
     
-    def _load_model_with_compatibility(self, model_path):
-        """
-        Load a model with compatibility fixes for different XGBoost versions
-        
-        This function handles version differences in XGBoost by safely extracting
-        the core model components and rebuilding a compatible model.
-        
-        Parameters:
-        -----------
-        model_path : str
-            Path to the model pickle file
-            
-        Returns:
-        --------
-        dict
-            Model data dictionary with version-compatible models
-        """
-        try:
-            # First try to load the model data
-            with open(model_path, 'rb') as f:
-                model_data = pickle.load(f)
-            
-            return model_data
-            
-        except Exception as e:
-            logger.error(f"Error loading model with compatibility fix: {str(e)}")
-            # Create an empty model data structure as fallback
-            return {'model': None, 'scaler': None}
-        
     def load_category_benchmarks(self, file_path=None):
         """
         Load category benchmarks from outlier stats

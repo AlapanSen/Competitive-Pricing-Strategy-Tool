@@ -46,11 +46,12 @@ if 'pricing_strategy' not in st.session_state:
     # Debug info about benchmarks
     benchmark_info = {
         "Models Directory": models_dir,
+        "Models Loaded": len(st.session_state.pricing_strategy.models),
+        "Models Found": True if len(st.session_state.pricing_strategy.models) > 0 else False,
         "Benchmark Categories": list(st.session_state.pricing_strategy.category_benchmarks.keys()),
-        "Total Categories": len(st.session_state.pricing_strategy.category_benchmarks),
-        "Sample Data": str(list(st.session_state.pricing_strategy.category_benchmarks.values())[:2])
+        "Total Categories": len(st.session_state.pricing_strategy.category_benchmarks)
     }
-    st.sidebar.expander("Debug: Benchmark Data", expanded=False).write(benchmark_info)
+    st.sidebar.expander("Debug Information", expanded=False).write(benchmark_info)
 
 # Sidebar
 # Using a hosted image instead of local
@@ -62,6 +63,7 @@ st.sidebar.markdown("This tool helps new sellers enter the market with competiti
 # Get available categories
 available_categories = list(st.session_state.pricing_strategy.models.keys())
 
+# Immediately check if models were successfully loaded, if not use demo mode
 if not available_categories:
     # When no models are available, create default categories for demo
     default_categories = [
@@ -71,21 +73,27 @@ if not available_categories:
     ]
     
     st.warning("""
-    ⚠️ No trained models found. Running in demo mode with simulated models.
-    You can still explore the interface and functionality.
+    ⚠️ No trained models could be loaded. Running in demo mode with simulated models.
     """)
     
     # Create a simulated pricing strategy
     class SimulatedPricingStrategy(PricingStrategy):
         def predict_price(self, product_features, category):
             """Simulate a price prediction"""
+            import logging
+            logger = logging.getLogger()
+            logger.info(f"Using simulated prediction for {category}")
+            
             base_price = product_features['manufacturing_cost'] * 2.5
             if 'rating' in product_features:
                 base_price *= (1 + 0.1 * (product_features['rating'] - 3))
             
             return {
                 'predicted_market_price': base_price,
-                'confidence': 0.8,
+                'confidence_lower': base_price * 0.85,
+                'confidence_upper': base_price * 1.15,
+                'model_mape': 0.15,
+                'model_within_10pct': 0.8,
                 'category': category
             }
     
@@ -199,7 +207,7 @@ with tab1:
     # Button to generate pricing
     if st.button("Generate Pricing Strategy"):
         with st.spinner("Analyzing market conditions and generating recommendation..."):
-            # Make prediction
+            # Make prediction - no try/except, let errors show
             prediction = st.session_state.pricing_strategy.predict_price(features, category)
             
             if prediction:
@@ -251,9 +259,24 @@ with tab1:
                         if 'viability_issue' in recommendation and recommendation['viability_issue']:
                             st.error("""
                             ### ⚠️ Product Viability Issue
-                            The manufacturing cost is too high relative to the market price, 
-                            making it difficult to price competitively while maintaining minimum profit margins.
+                            The manufacturing cost is too high relative to the market price, making 
+                            this product difficult to sell profitably. Consider:
+                            1. Reducing manufacturing costs
+                            2. Finding premium market segments
+                            3. Adding unique features that justify a higher price
                             """)
+                            
+                            st.info(f"""
+                            To make this product viable, manufacturing costs would need to be reduced 
+                            to approximately ₹{recommendation['recommended_max_cost']:.2f} 
+                            (a reduction of ₹{recommendation['cost_reduction_needed']:.2f}).
+                            """)
+                    else:
+                        st.error("Failed to generate visualization")
+                else:
+                    st.error("Failed to generate pricing recommendation")
+            else:
+                st.error("Failed to predict market price")
 
 # Tab 2: Batch Pricing
 with tab2:
