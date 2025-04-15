@@ -37,12 +37,15 @@ def get_download_link(df, filename, text):
 
 # Initialize session state
 if 'pricing_strategy' not in st.session_state:
-    st.session_state.pricing_strategy = PricingStrategy()
+    # Explicitly specify the models directory path for Streamlit Cloud compatibility
+    models_dir = os.path.join(os.getcwd(), 'models', 'improved', 'category_models')
+    st.session_state.pricing_strategy = PricingStrategy(models_dir=models_dir)
     # Load benchmarks
     st.session_state.pricing_strategy.load_category_benchmarks()
     
     # Debug info about benchmarks
     benchmark_info = {
+        "Models Directory": models_dir,
         "Benchmark Categories": list(st.session_state.pricing_strategy.category_benchmarks.keys()),
         "Total Categories": len(st.session_state.pricing_strategy.category_benchmarks),
         "Sample Data": str(list(st.session_state.pricing_strategy.category_benchmarks.values())[:2])

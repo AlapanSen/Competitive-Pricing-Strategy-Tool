@@ -121,15 +121,34 @@ class PricingStrategy:
     def _load_models_and_metrics(self):
         """Load all available models and their metrics"""
         logger.info("Loading models and metrics")
+        logger.info(f"Looking for models in directory: {self.models_dir}")
+        
+        # Check if directory exists
+        if not os.path.exists(self.models_dir):
+            logger.error(f"Models directory does not exist: {self.models_dir}")
+            # Try to create it - this will help with debugging in Streamlit Cloud
+            try:
+                os.makedirs(self.models_dir, exist_ok=True)
+                logger.info(f"Created models directory: {self.models_dir}")
+            except Exception as e:
+                logger.error(f"Could not create models directory: {str(e)}")
+            return
         
         # Find all categories with models
-        categories = [d for d in os.listdir(self.models_dir) 
-                     if os.path.isdir(os.path.join(self.models_dir, d))]
+        try:
+            categories = [d for d in os.listdir(self.models_dir) 
+                         if os.path.isdir(os.path.join(self.models_dir, d))]
+            logger.info(f"Found {len(categories)} category directories: {categories}")
+        except Exception as e:
+            logger.error(f"Error listing categories in {self.models_dir}: {str(e)}")
+            return
         
         for category in categories:
             try:
                 # Load the model
                 model_path = os.path.join(self.models_dir, category, 'model.pkl')
+                logger.info(f"Looking for model file at: {model_path}")
+                
                 if os.path.exists(model_path):
                     with open(model_path, 'rb') as f:
                         model_data = pickle.load(f)
@@ -141,16 +160,19 @@ class PricingStrategy:
                             metrics = json.load(f)
                     else:
                         metrics = {}
+                        logger.warning(f"No metrics file found for {category} at {metrics_path}")
                         
                     # Store in dictionaries
                     self.models[category] = model_data
                     self.metrics[category] = metrics
                     
                     logger.info(f"Loaded model for {category}")
+                else:
+                    logger.warning(f"Model file does not exist: {model_path}")
             except Exception as e:
                 logger.error(f"Error loading model for {category}: {str(e)}")
         
-        logger.info(f"Loaded {len(self.models)} models")
+        logger.info(f"Loaded {len(self.models)} models out of {len(categories)} categories")
         
     def load_category_benchmarks(self, file_path=None):
         """
