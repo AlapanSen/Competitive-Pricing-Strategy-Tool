@@ -125,7 +125,7 @@ if not available_categories:
                 "Smartwatches": 0.05
             }
                 
-        def predict_price(self, features, category):
+        def predict_price(self, category, features):
             # Simple price calculation based on features
             base_price = features['manufacturing_cost'] * features['price_to_cost_ratio']
             adjustment = (features['rating'] / 5.0) * 0.2 * base_price  # Up to 20% quality premium
@@ -140,9 +140,18 @@ if not available_categories:
                 'model_within_10pct': 0.8
             }
         
-        def get_competitive_price(self, prediction, manufacturing_cost, 
-                                market_saturation, brand_strength):
-            predicted_price = prediction['predicted_market_price']
+        def get_competitive_price(self, features, category, market_saturation='medium', brand_strength='medium'):
+            # Get manufacturing cost from features
+            if isinstance(features, dict):
+                manufacturing_cost = features.get('manufacturing_cost', 0)
+            else:
+                manufacturing_cost = features['manufacturing_cost'].iloc[0] if 'manufacturing_cost' in features else 0
+            
+            # For demo: prediction is a simplified object
+            # In real class, we'd call predict_price - here we calculate directly
+            base_price = manufacturing_cost * features.get('price_to_cost_ratio', 2.0)
+            adjustment = (features.get('rating', 4.0) / 5.0) * 0.2 * base_price
+            predicted_price = base_price + adjustment
             
             # Discount based on market conditions
             discount_map = {
@@ -181,7 +190,7 @@ if not available_categories:
             profit_margin = profit / recommended_price * 100
             
             return {
-                'category': prediction['category'],
+                'category': category,
                 'predicted_market_price': predicted_price,
                 'recommended_price': recommended_price,
                 'manufacturing_cost': manufacturing_cost,
@@ -368,13 +377,13 @@ with tab1:
     if st.button("Generate Pricing Strategy"):
         with st.spinner("Analyzing market conditions and generating recommendation..."):
             # Make prediction
-            prediction = st.session_state.pricing_strategy.predict_price(features, category)
+            prediction = st.session_state.pricing_strategy.predict_price(category, features)
             
             if prediction:
                 # Get recommendation
                 recommendation = st.session_state.pricing_strategy.get_competitive_price(
-                    prediction,
-                    manufacturing_cost,
+                    features,
+                    category,
                     market_saturation.lower(),
                     brand_strength.lower()
                 )
@@ -576,13 +585,13 @@ with tab2:
                                 
                                 # Make prediction
                                 prediction = st.session_state.pricing_strategy.predict_price(
-                                    features, row['category'])
+                                    row['category'], features)
                                 
                                 if prediction:
                                     # Get recommendation
                                     recommendation = st.session_state.pricing_strategy.get_competitive_price(
-                                        prediction,
-                                        row['manufacturing_cost'],
+                                        features,
+                                        row['category'],
                                         row['market_saturation'].lower(),
                                         row['brand_strength'].lower()
                                     )

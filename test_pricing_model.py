@@ -128,12 +128,12 @@ def test_pricing_model():
             }
             
             # Get prediction
-            prediction = strategy.predict_price(features, category)
+            prediction = strategy.predict_price(category, features)
             
             if prediction:
                 # Test with medium market conditions
                 recommendation = strategy.get_competitive_price(
-                    prediction, cost, 'medium', 'medium'
+                    features, category, 'medium', 'medium'
                 )
                 
                 if recommendation:
@@ -175,11 +175,11 @@ def test_pricing_model():
                     'quality_score': 80
                 }
                 
-                prediction = strategy.predict_price(features, category)
+                prediction = strategy.predict_price(category, features)
                 
                 if prediction:
                     recommendation = strategy.get_competitive_price(
-                        prediction, category_cost, saturation, strength
+                        features, category, saturation, strength
                     )
                     
                     if recommendation:
@@ -212,11 +212,11 @@ def test_pricing_model():
                     'quality_score': rating * 20
                 }
                 
-                prediction = strategy.predict_price(features, category)
+                prediction = strategy.predict_price(category, features)
                 
                 if prediction:
                     recommendation = strategy.get_competitive_price(
-                        prediction, category_cost, 'medium', 'medium'
+                        features, category, 'medium', 'medium'
                     )
                     
                     if recommendation:

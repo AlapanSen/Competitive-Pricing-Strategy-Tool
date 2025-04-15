@@ -7,6 +7,7 @@ import logging
 import matplotlib.pyplot as plt
 import seaborn as sns
 from datetime import datetime
+import joblib
 
 # Configure logging
 logging.basicConfig(
@@ -30,7 +31,7 @@ class PricingStrategy:
     """
     
     def __init__(self, 
-                models_dir='models/improved/category_models',
+                models_dir='models/category_models',
                 aggressive_discount_range=(0.15, 0.25),  # 15-25% below market
                 min_profit_margin=0.08,  # 8% minimum profit margin
                 category_min_margins=None  # Category-specific minimum margins
@@ -107,106 +108,125 @@ class PricingStrategy:
         self._load_models_and_metrics()
         
     def _load_models_and_metrics(self):
-        """Load all available models and their metrics"""
-        logger.info("Loading models and metrics")
+        """
+        Load trained models and performance metrics from files
+        """
+        # Create models directory if it doesn't exist
+        os.makedirs('models', exist_ok=True)
+        os.makedirs('models/category_models', exist_ok=True)
         
         try:
-            # Check if the models directory exists
-            if not os.path.exists(self.models_dir):
-                logger.error(f"Models directory not found: {self.models_dir}")
-                return
-            
-            # Get all files in the directory
-            files = os.listdir(self.models_dir)
-            
-            # First, try the original approach (subdirectories)
-            categories = [d for d in files if os.path.isdir(os.path.join(self.models_dir, d))]
-            
-            if categories:
-                # Use the subdirectory approach
-                for category in categories:
+            # Load category models
+            category_models_path = 'models/category_models'
+            for model_file in os.listdir(category_models_path):
+                if model_file.endswith('.joblib'):
+                    category = model_file.replace('_model.joblib', '')
+                    model_path = os.path.join(category_models_path, model_file)
+                    
                     try:
-                        # Load the model
-                        model_path = os.path.join(self.models_dir, category, 'model.pkl')
-                        if os.path.exists(model_path):
-                            with open(model_path, 'rb') as f:
-                                model_data = pickle.load(f)
-                                
-                            # Load metrics
-                            metrics_path = os.path.join(self.models_dir, category, 'metrics.json')
-                            if os.path.exists(metrics_path):
-                                with open(metrics_path, 'r') as f:
-                                    metrics = json.load(f)
-                            else:
-                                metrics = {}
-                                
-                            # Store in dictionaries
-                            self.models[category] = model_data
-                            self.metrics[category] = metrics
-                            
-                            logger.info(f"Loaded model for {category} from subdirectory")
-                    except Exception as e:
-                        logger.error(f"Error loading model for {category} from subdirectory: {str(e)}")
-            else:
-                # Try the flat file approach - look for files named Category_model.pkl
-                model_files = [f for f in files if f.endswith('_model.pkl')]
-                
-                for model_file in model_files:
-                    try:
-                        # Extract category name from filename (remove _model.pkl)
-                        category = model_file.replace('_model.pkl', '')
-                        
-                        # Load the model
-                        model_path = os.path.join(self.models_dir, model_file)
-                        with open(model_path, 'rb') as f:
-                            model = pickle.load(f)
-                            
-                        # In flat file structure, create a wrapper object with model and scaler
-                        from sklearn.preprocessing import StandardScaler
-                        # Create a no-op scaler (scales by 1, centers at 0)
-                        scaler = StandardScaler()
-                        # Initialize with identity parameters
-                        if hasattr(model, 'feature_names_in_'):
-                            n_features = len(model.feature_names_in_)
-                            scaler.mean_ = np.zeros(n_features)  # No centering
-                            scaler.scale_ = np.ones(n_features)  # No scaling
-                            scaler.var_ = np.ones(n_features)   # Required for scale_
-                            scaler.n_features_in_ = n_features
-                            scaler.n_samples_seen_ = 1
-                            # Store feature names if possible
-                            scaler.feature_names_in_ = model.feature_names_in_
-                        
-                        model_data = {
-                            'model': model,
-                            'scaler': scaler,
-                            'is_log_price': False  # Default value
-                        }
-                        
-                        # Load metrics if they exist
-                        metrics_path = os.path.join(self.models_dir, f"{category}_metrics.json")
-                        if os.path.exists(metrics_path):
-                            with open(metrics_path, 'r') as f:
-                                metrics = json.load(f)
-                        else:
-                            metrics = {}
-                            
-                        # Store in dictionaries
+                        model_data = joblib.load(model_path)
                         self.models[category] = model_data
-                        self.metrics[category] = metrics
                         
-                        logger.info(f"Loaded model for {category} from flat file structure")
+                        # Store feature means and standard deviations for standardization
+                        if 'scaler' in model_data and hasattr(model_data['scaler'], 'mean_') and hasattr(model_data['scaler'], 'scale_'):
+                            self.models[category]['means'] = model_data['scaler'].mean_
+                            self.models[category]['stds'] = model_data['scaler'].scale_
+                        
+                        logger.info(f"Loaded model for category: {category}")
                     except Exception as e:
-                        logger.error(f"Error loading model for {model_file}: {str(e)}")
+                        logger.error(f"Error loading model for {category}: {str(e)}")
             
-            logger.info(f"Loaded {len(self.models)} models")
+            # Load metrics
+            metrics_path = 'models/metrics.json'
+            if os.path.exists(metrics_path):
+                with open(metrics_path, 'r') as f:
+                    self.metrics = json.load(f)
+                logger.info(f"Loaded performance metrics for {len(self.metrics)} categories")
+                
         except Exception as e:
-            logger.error(f"Error in _load_models_and_metrics: {str(e)}")
-            import traceback
+            logger.error(f"Error loading models: {str(e)}")
             logger.error(traceback.format_exc())
+    
+    def get_feature_extractor(self, expected_features):
+        """
+        Create a function that extracts features in the expected order
+        from either a dictionary or pandas DataFrame
         
+        Args:
+            expected_features: List of feature names the model expects
+            
+        Returns:
+            A function that extracts features in the right order
+        """
+        def feature_extractor(product_data):
+            """
+            Extract features from product data in the order expected by the model
+            Works with both dictionary and DataFrame inputs
+            
+            Args:
+                product_data: Dictionary or DataFrame containing product features
+                
+            Returns:
+                numpy array of features in the expected order
+            """
+            try:
+                # Handle different input types
+                if isinstance(product_data, dict):
+                    # Extract features from dictionary
+                    features = np.array([
+                        float(product_data.get(feature, 0)) 
+                        for feature in expected_features
+                    ]).reshape(1, -1)
+                    
+                elif hasattr(product_data, 'iloc'):  # Check if it's DataFrame-like
+                    # Extract features from DataFrame
+                    try:
+                        # Try using expected_features as column names
+                        features = product_data[expected_features].values.astype(float)
+                    except (KeyError, TypeError):
+                        # If that fails, try to use the first N columns
+                        features = product_data.iloc[:, :len(expected_features)].values.astype(float)
+                        
+                    # Reshape if needed
+                    if len(features.shape) == 1 or features.shape[0] == 1:
+                        features = features.reshape(1, -1)
+                        
+                else:
+                    # If it's already a numpy array, verify shape
+                    features = np.array(product_data, dtype=float)
+                    if len(features.shape) == 1:
+                        features = features.reshape(1, -1)
+                
+                # Check if we have the right number of features
+                if features.shape[1] != len(expected_features):
+                    logger.warning(
+                        f"Feature mismatch: Model expects {len(expected_features)} features, "
+                        f"but got {features.shape[1]}. Padding with zeros."
+                    )
+                    # Pad with zeros if needed
+                    if features.shape[1] < len(expected_features):
+                        padding = np.zeros((features.shape[0], len(expected_features) - features.shape[1]))
+                        features = np.hstack([features, padding])
+                    else:
+                        # Truncate if we have too many features
+                        features = features[:, :len(expected_features)]
+                
+                return features
+                
+            except Exception as e:
+                logger.error(f"Error extracting features: {str(e)}")
+                # Return zeros as fallback
+                return np.zeros((1, len(expected_features)))
+                
+        return feature_extractor
+    
+    def _safe_divide(self, a, b, default=1.0):
+        """Safely divide a by b, returning default if b is 0"""
+        return np.where(b > 0, a / b, default)
+
     def load_category_benchmarks(self, file_path='logs/outlier_stats.json'):
         """
-        Load category benchmarks from outlier stats
+        Load category benchmarks from various potential sources
         
         This gives us important price distribution information
         for each category to inform pricing decisions
@@ -247,7 +267,7 @@ class PricingStrategy:
             # Try to extract benchmarks in different formats
             # First, check if the data is already in the expected format
             if isinstance(benchmark_data, dict) and all(
-                isinstance(v, dict) and 'median_price' in v for k, v in benchmark_data.items()
+                isinstance(v, dict) and 'median_price' in v for k, v in benchmark_data.items() if isinstance(v, dict)
             ):
                 # Data is already in the right format - use directly
                 self.category_benchmarks = benchmark_data
@@ -289,8 +309,8 @@ class PricingStrategy:
                             'q1': q1,
                             'q3': q3,
                             'iqr': float(stats.get('IQR', q3 - q1)),
-                            'min_price': float(stats.get('lower_bound', q1 * 0.5)),
-                            'max_price': float(stats.get('upper_bound', q3 * 1.5))
+                            'min_price': float(price_stats.get('lower_bound', q1 * 0.5)),
+                            'max_price': float(price_stats.get('upper_bound', q3 * 1.5))
                         }
             except Exception as e:
                 logger.error(f"Error parsing benchmark data: {str(e)}")
@@ -315,6 +335,8 @@ class PricingStrategy:
             return True
         except Exception as e:
             logger.error(f"Error loading category benchmarks: {str(e)}")
+            import traceback
+            logger.error(traceback.format_exc())
             # Create default benchmark data
             self.category_benchmarks = {category: {
                 'median_price': 1000.0,  # Default median price
@@ -327,464 +349,227 @@ class PricingStrategy:
             
             logger.info(f"Created default benchmarks for {len(self.category_benchmarks)} categories due to error")
             return False
-    
-    def predict_price(self, product_features, category):
+
+    def standardize_features(self, features, means=None, stds=None):
         """
-        Predict the market price for a product based on its features
+        Standardize features without requiring original column names
         
-        Parameters:
-        -----------
-        product_features : dict
-            Dictionary of product features
-        category : str
-            Product category
+        Args:
+            features: numpy array or DataFrame of features to standardize
+            means: means for standardization (if None, calculate from features)
+            stds: standard deviations for standardization (if None, calculate from features)
             
         Returns:
-        --------
-        dict
-            Dictionary with predicted price and confidence info
+            Tuple of (standardized_features, means, stds)
         """
-        if category not in self.models:
-            logger.error(f"No model available for category: {category}")
-            return None
+        # Convert features to numpy array if it's a DataFrame
+        if hasattr(features, 'values'):
+            features_array = features.values
+        else:
+            features_array = np.array(features)
+            
+        # If means and stds are not provided, calculate them
+        if means is None or stds is None:
+            means = np.mean(features_array, axis=0)
+            stds = np.std(features_array, axis=0)
+            # Avoid division by zero
+            stds = np.where(stds == 0, 1.0, stds)
         
-        try:
-            # Get the model data
-            model_data = self.models[category]
-            model = model_data['model']
-            scaler = model_data['scaler']
-            is_log_price = model_data.get('is_log_price', False)
-            
-            # Convert dict to DataFrame
-            features_df = pd.DataFrame([product_features])
-            
-            # Calculate derived features
-            if 'manufacturing_cost' in features_df and 'price_to_cost_ratio' in features_df:
-                # Estimated market price based on cost ratio
-                features_df['category_median_price'] = features_df['manufacturing_cost'] * features_df['price_to_cost_ratio']
-            
-            if 'rating' in features_df and 'rating_count' in features_df:
-                # Rating × count is a measure of review reliability
-                features_df['rating_x_count'] = features_df['rating'] * features_df['rating_count']
-                
-                # Quality score derived from rating
-                features_df['quality_tier'] = features_df['rating'] / 5.0  # Normalized 0-1
+        # Standardize the features
+        standardized_features = (features_array - means) / stds
+        
+        return standardized_features, means, stds
 
-                # Product quality-related features
-                features_df['quality_score'] = features_df['rating'] * 20  # Scale to 0-100
+    def predict_price(self, category, features):
+        """
+        Predict the product price for a given category and feature set
+        
+        Args:
+            category: Product category
+            features: Dictionary of feature values
             
-            if 'manufacturing_cost' in features_df:
-                # Log transformed cost
-                features_df['log_manufacturing_cost'] = np.log1p(features_df['manufacturing_cost'])
+        Returns:
+            Predicted price or None if prediction fails
+        """
+        try:
+            # Select the appropriate model and parameters
+            model, expected_features, feature_means, feature_stds = self._select_model(category)
+            
+            if model is None or expected_features is None:
+                logger.error(f"Cannot predict price: Missing model or feature list for category {category}")
+                return None
                 
-                # Use production_cost as synonym for manufacturing_cost
-                features_df['production_cost'] = features_df['manufacturing_cost']
+            # Ensure all expected features are present
+            input_features = []
+            for feature in expected_features:
+                if feature not in features:
+                    logger.warning(f"Missing feature: {feature} for category {category}")
+                    return None
+                input_features.append(features[feature])
             
-            if 'discount_percentage' in features_df and 'category_median_price' in features_df:
-                # Estimated discounted price
-                estimated_price = features_df['category_median_price']
-                discount_pct = features_df['discount_percentage'] / 100.0
-                features_df['discount_amount'] = estimated_price * discount_pct
-                discounted_price = estimated_price * (1 - discount_pct)
-                features_df['log_discounted_price'] = np.log1p(discounted_price)
+            # Convert to numpy array and reshape
+            X = np.array(input_features).reshape(1, -1)
             
-            if 'brand_strength_score' in features_df:
-                # Map brand_strength_score to brand_strength
-                features_df['brand_strength'] = features_df['brand_strength_score']
-            elif 'brand_strength' not in features_df:
-                # Default brand strength - may be overridden by market conditions
-                features_df['brand_strength'] = 0.5  # Medium
-            
-            # Add common derived features
-            features_df['complexity_score'] = 0.5  # Medium complexity
-            features_df['technology_level'] = 0.6  # Slightly above medium tech
-            features_df['feature_count'] = 5      # Average feature count
-            features_df['value_score'] = 0.5      # Medium value
-            features_df['premium_index'] = 0.4    # Slightly below premium
-            features_df['price_elasticity'] = -1.5  # Average elasticity
-            features_df['estimated_units_sold'] = 1000  # Default units
-            features_df['seasonal_relevance'] = 0.5  # Medium seasonality
-            features_df['is_new_release'] = 0    # Not a new release
-            
-            # Calculate price ratios if possible
-            if 'category_median_price' in features_df and 'manufacturing_cost' in features_df:
-                if features_df['category_median_price'].iloc[0] > 0:
-                    # Price relative to category median
-                    estimated_price = features_df['manufacturing_cost'] * features_df['price_to_cost_ratio'] 
-                    features_df['price_to_category_median_ratio'] = estimated_price / features_df['category_median_price']
-                    features_df['price_relative_to_median'] = features_df['price_to_category_median_ratio'] - 1.0
-                else:
-                    features_df['price_to_category_median_ratio'] = 1.0
-                    features_df['price_relative_to_median'] = 0.0
-            
-            # Calculate brand price ratio
-            features_df['brand_avg_price'] = features_df['manufacturing_cost'] * 2.0  # Assume 2x markup
-            features_df['brand_product_count'] = 100  # Default count
-            features_df['price_to_brand_avg_ratio'] = 1.0  # Default ratio
-            
-            # Add market segmentation estimate
-            price_segment_mapping = {
-                'budget': 0,
-                'value': 1,
-                'mainstream': 2,
-                'premium': 3,
-                'luxury': 4
-            }
-            features_df['price_segment_numeric'] = 2  # Default to mainstream
-            
-            # Estimate price percentile position (0-1 scale)
-            features_df['price_percentile'] = 0.5  # Default to median
-            
-            # Add missing advanced features that the model might expect
-            advanced_features = {
-                'actual_price': features_df['manufacturing_cost'] * features_df['price_to_cost_ratio'],
-                'price_competitiveness_ratio': 1.0,  # Neutral
-                'profit_margin_ratio': features_df['margin_percentage'] / 100.0,
-                'competitor_undercut_potential': 0.5,  # Medium
-                'is_budget_segment': 0,  # Not budget by default
-                'is_mid_segment': 1,     # Mid-segment by default
-                'is_premium_segment': 0, # Not premium by default
-                'customer_attraction_score': 0.6,  # Moderate attraction
-                'feature_to_price_ratio': 1.0,    # Average ratio
-                'tech_value_proposition': 0.5,    # Medium value
-                'relative_to_lowest_quartile': 2.0,  # 2x the lowest quartile
-                'value_adjusted_price': features_df['manufacturing_cost'] * 1.8,  # Adjusted for value
-                'category_price_index': 1.0,  # Average for category
-                'demand_indicator': 0.5,     # Medium demand
-                'brand_power_price_ratio': 1.0,  # Neutral
-                'new_seller_competitive_price': features_df['manufacturing_cost'] * 1.7,  # Competitive for new sellers
-                'sustainable_price': features_df['manufacturing_cost'] * 1.5,  # Sustainable in the market
-                'ideal_customer_attraction_price': features_df['manufacturing_cost'] * 1.6,  # Good for customer attraction
-                'market_penetration_potential': 0.6,  # Medium penetration potential
-                'elasticity_adjusted_value': 0.5  # Medium elasticity adjustment
-            }
-            
-            # Add all advanced features to the DataFrame
-            for feature, value in advanced_features.items():
-                features_df[feature] = value
-            
-            # Get the features that the model was trained on
-            if hasattr(model, 'feature_names_in_'):
-                expected_features = list(model.feature_names_in_)
-                
-                # Create a DataFrame with all expected features
-                model_features_df = pd.DataFrame(index=features_df.index)
-                
-                # Fill in the features from our calculations
-                for feature in expected_features:
-                    if feature in features_df.columns:
-                        model_features_df[feature] = features_df[feature]
-                    else:
-                        logger.warning(f"Feature '{feature}' not found in input, setting to 0")
-                        model_features_df[feature] = 0
-                
-                logger.info(f"Using {len(model_features_df.columns)} features for prediction")
-                
-                # Check if scaler is properly fit
-                if not hasattr(scaler, 'mean_') or not hasattr(scaler, 'scale_'):
-                    # Scaler is not trained, just use the raw features
-                    logger.warning("Scaler is not trained, using raw features")
-                    features_array = model_features_df[expected_features].values
-                else:
-                    # Properly handle feature names for sklearn 1.0+ compatibility
-                    # Convert to array with matching feature names to prevent warnings
-                    import warnings
-                    with warnings.catch_warnings():
-                        warnings.filterwarnings("ignore", category=UserWarning)
-                        # Create a numpy array in the correct order
-                        input_array = model_features_df[expected_features].values
-                        # Scale the features
-                        features_array = scaler.transform(input_array)
-                
-                # Make prediction
-                predicted_value = model.predict(features_array)[0]
+            # Apply standardization if means and stds are available
+            if feature_means is not None and feature_stds is not None:
+                # Standardize features
+                X_std = (X - feature_means) / feature_stds
+                # Handle potential division by zero in StandardScaler
+                X_std = np.nan_to_num(X_std, nan=0.0, posinf=0.0, neginf=0.0)
             else:
-                # Fallback for models without feature_names_in_
-                # Just use all features and hope they match
-                logger.warning("Model doesn't have feature_names_in_ attribute, using all features")
-                all_features = features_df.values
-                
-                # Check if scaler is properly fit
-                if not hasattr(scaler, 'mean_') or not hasattr(scaler, 'scale_'):
-                    features_array = all_features
-                    logger.warning("Scaler is not trained, using raw features")
-                else:
-                    features_array = scaler.transform(all_features)
-                
-                predicted_value = model.predict(features_array)[0]
+                X_std = X
             
-            # If we used log transformation, convert back
-            if is_log_price:
-                predicted_price = np.expm1(predicted_value)
-            else:
-                predicted_price = predicted_value
+            # Make prediction
+            prediction = model.predict(X_std)[0]
             
-            # Apply category-specific calibration factors
-            # Based on observed price-to-median ratios from test results
-            calibration_factors = {
-                'Audio': 1.25,                # Observed 0.63x -> adjust by 1.25 to get closer to real prices
-                'Cameras': 1.2,               # Observed 0.65x
-                'Climate Control': 1.2,       # Observed 0.64x
-                'Computers': 1.2,             # Observed 0.64x
-                'Home Entertainment': 1.45,   # Observed 0.53x
-                'Home Improvement': 1.2,      # Observed 0.63x
-                'Home Office': 1.45,          # Observed 0.54x
-                'Kitchen Appliances': 1.1,    # Observed 0.71x
-                'Mobile Accessories': 1.2,    # Observed 0.69x
-                'Smartwatches': 1.05          # Observed 0.77x (most accurate)
-            }
+            # Apply category-specific calibration if available
+            if category in self.calibration_factors:
+                prediction *= self.calibration_factors[category]
             
-            # Apply calibration if category exists in our factors
-            if category in calibration_factors:
-                calibration_factor = calibration_factors[category]
-                predicted_price *= calibration_factor
-                logger.info(f"Applied calibration factor of {calibration_factor:.2f} for {category}")
-            
-            # Sanity check on the predicted price
-            if predicted_price <= 0:
-                logger.warning(f"Invalid predicted price: {predicted_price}, using fallback estimation")
-                # Fallback to a simple cost-plus model
-                predicted_price = product_features['manufacturing_cost'] * product_features.get('price_to_cost_ratio', 2.0)
-            
-            # Get model accuracy metrics
-            metrics = self.metrics.get(category, {})
-            mape = metrics.get('test_mape', 0.15)  # Default to 15% if not available
-            within_10pct = metrics.get('test_within_10pct', 0.8)  # Default to 80%
-            
-            # Calculate confidence range
-            lower_bound = predicted_price * (1 - mape * 1.5)  # 1.5x MAPE for lower bound
-            upper_bound = predicted_price * (1 + mape * 1.5)  # 1.5x MAPE for upper bound
-            
-            prediction_info = {
-                'category': category,
-                'predicted_market_price': float(predicted_price),
-                'confidence_lower': float(lower_bound),
-                'confidence_upper': float(upper_bound),
-                'model_mape': float(mape),
-                'model_within_10pct': float(within_10pct)
-            }
-            
-            return prediction_info
+            return prediction
             
         except Exception as e:
-            logger.error(f"Error predicting price: {str(e)}")
-            # Print detailed traceback for debugging
-            import traceback
-            logger.error(traceback.format_exc())
+            logger.error(f"Error predicting price for {category}: {str(e)}")
             return None
     
-    def get_competitive_price(self, prediction_info, manufacturing_cost, 
-                             market_saturation='medium',
-                             brand_strength='medium'):
+    def get_competitive_price(self, features, category, market_saturation=0.5, brand_strength=0.5):
         """
-        Get a competitive price recommendation based on market prediction and strategy
+        Calculate a competitive price based on features and market conditions
         
-        Parameters:
-        -----------
-        prediction_info : dict
-            Output from predict_price method
-        manufacturing_cost : float
-            Manufacturing cost of the product
-        market_saturation : str
-            'low', 'medium', or 'high' - affects discount aggressiveness
-        brand_strength : str
-            'low', 'medium', or 'high' - affects discount aggressiveness
+        Args:
+            features: Dictionary or DataFrame with product features
+            category: Product category
+            market_saturation: Float [0-1] indicating market saturation (higher = more saturated)
+            brand_strength: Float [0-1] indicating brand strength (higher = stronger)
             
         Returns:
-        --------
-        dict
-            Pricing recommendation with strategy details
+            Dictionary with pricing recommendations and strategy details
         """
-        if prediction_info is None:
-            return None
-        
-        category = prediction_info['category']
-        predicted_market_price = prediction_info['predicted_market_price']
-        
-        # Get thresholds for this category, defaulting to conservative values
-        warning_threshold, viability_threshold = self.category_thresholds.get(
-            category, (0.85, 1.0)  # Default thresholds if category not found
-        )
-        
-        # Check if manufacturing cost is higher than market price based on category-specific threshold
-        cost_to_market_ratio = manufacturing_cost / predicted_market_price
-        is_cost_higher = cost_to_market_ratio > warning_threshold
-        
-        # Handle high manufacturing cost scenario
-        if is_cost_higher:
-            logger.warning(f"Manufacturing cost (₹{manufacturing_cost:.2f}) is {cost_to_market_ratio:.1f}x " + 
-                          f"the predicted market price (₹{predicted_market_price:.2f})")
+        try:
+            # Get manufacturing cost from features
+            if isinstance(features, dict):
+                manufacturing_cost = features.get('manufacturing_cost', 0)
+            else:
+                manufacturing_cost = features['manufacturing_cost'].iloc[0] if 'manufacturing_cost' in features else 0
             
-            # Get category-specific minimum margin or use default
-            category_min_margin = self.category_min_margins.get(category, self.min_profit_margin)
-            
-            # Calculate minimum viable price with reduced profit margin for high-cost items
-            # For high-cost scenarios, we can reduce the margin by up to 3%, but not below 3%
-            min_profit_margin = max(0.03, category_min_margin - 0.03)
-            logger.info(f"Using reduced minimum profit margin: {min_profit_margin:.1%} for high-cost item")
-            
-            # Calculate minimum viable price
-            cost_plus_min_margin = manufacturing_cost / (1 - min_profit_margin)
-            
-            # Use category-specific viability threshold
-            if cost_to_market_ratio > viability_threshold:
-                logger.warning(f"Product may not be viable at this manufacturing cost")
-                strategy_name = "Cost Reconsideration Required"
+            # Get the predicted market price
+            predicted_price = self.predict_price(category, features)
+            if predicted_price is None:
+                logger.error("Failed to predict price")
+                return {"error": "Failed to predict price"}
                 
-                # Calculate what manufacturing cost would need to be for viability
-                viable_cost = predicted_market_price * (viability_threshold - 0.15)  # 15% below threshold
-                
-                recommendation = {
-                    'category': category,
-                    'predicted_market_price': float(predicted_market_price),
-                    'manufacturing_cost': float(manufacturing_cost),
-                    'recommended_price': float(cost_plus_min_margin),
-                    'min_competitive_price': float(predicted_market_price * 0.9),  # 10% below market
-                    'max_competitive_price': float(predicted_market_price),
-                    'minimum_viable_price': float(cost_plus_min_margin),
-                    'profit_margin': float((cost_plus_min_margin - manufacturing_cost) / cost_plus_min_margin),
-                    'profit_margin_percentage': float(min_profit_margin * 100),
-                    'discount_from_market': float((predicted_market_price - cost_plus_min_margin) / predicted_market_price * -100),
-                    'market_saturation': market_saturation,
-                    'brand_strength': brand_strength,
-                    'price_elasticity': float(-1.2),  # Less elastic - premium pricing
-                    'estimated_sales_impact': float(-15),  # Negative impact on sales volume
-                    'strategy': strategy_name,
-                    'viability_issue': True,
-                    'recommended_max_cost': float(viable_cost),
-                    'cost_reduction_needed': float(manufacturing_cost - viable_cost)
-                }
-                
-                return recommendation
+            # Get margin thresholds for this category
+            min_margin = self.category_min_margins.get(category, 0.10)  # Default 10% margin
+            warning_threshold = self.category_thresholds.get(category, (0.6, 0.8))[0]
+            viability_threshold = self.category_thresholds.get(category, (0.6, 0.8))[1]
             
-            # Cost is high but potentially viable with premium positioning
-            strategy_name = "Premium Cost Recovery"
-            recommended_price = cost_plus_min_margin * 1.05  # 5% above minimum viable
+            # Calculate price to cost ratio
+            if manufacturing_cost > 0:
+                price_to_cost_ratio = predicted_price / manufacturing_cost
+            else:
+                price_to_cost_ratio = float('inf')
+                
+            # Check viability
+            viability_issue = False
+            high_cost_warning = False
             
-            recommendation = {
-                'category': category,
-                'predicted_market_price': float(predicted_market_price),
-                'manufacturing_cost': float(manufacturing_cost),
-                'recommended_price': float(recommended_price),
-                'min_competitive_price': float(cost_plus_min_margin),
-                'max_competitive_price': float(cost_plus_min_margin * 1.1),  # 10% above min viable
-                'minimum_viable_price': float(cost_plus_min_margin),
-                'profit_margin': float((recommended_price - manufacturing_cost) / recommended_price),
-                'profit_margin_percentage': float(((recommended_price - manufacturing_cost) / recommended_price) * 100),
-                'discount_from_market': float((predicted_market_price - recommended_price) / predicted_market_price * -100),
-                'market_saturation': market_saturation,
-                'brand_strength': brand_strength,
-                'price_elasticity': float(-1.2),  # Less elastic for premium items
-                'estimated_sales_impact': float(-15),  # Expect lower sales at higher price
-                'strategy': strategy_name,
-                'high_cost_warning': True
+            # Handle high manufacturing cost scenario
+            if price_to_cost_ratio < viability_threshold:
+                viability_issue = True
+                logger.warning(f"Viability issue detected for {category} product. "
+                               f"Price-to-cost ratio ({price_to_cost_ratio:.2f}) below viability threshold "
+                               f"({viability_threshold:.2f})")
+                
+                # Calculate reduced margin to keep price competitive despite high cost
+                adjusted_min_margin = min_margin * 0.5  # Reduce margin to half
+                logger.info(f"Reducing minimum margin from {min_margin:.2%} to {adjusted_min_margin:.2%}")
+                min_margin = adjusted_min_margin
+                
+            elif price_to_cost_ratio < warning_threshold:
+                high_cost_warning = True
+                logger.warning(f"High cost warning for {category} product. "
+                               f"Price-to-cost ratio ({price_to_cost_ratio:.2f}) below warning threshold "
+                               f"({warning_threshold:.2f})")
+                
+                # Slightly reduce margin
+                adjusted_min_margin = min_margin * 0.75  # Reduce margin to 75%
+                logger.info(f"Reducing minimum margin from {min_margin:.2%} to {adjusted_min_margin:.2%}")
+                min_margin = adjusted_min_margin
+            
+            # Calculate base discount range based on market saturation and brand strength
+            # More saturated market -> higher discount possible
+            # Stronger brand -> lower discount needed
+            max_discount = 0.25  # Maximum discount of 25%
+            min_discount = 0.05  # Minimum discount of 5%
+            
+            # Adjust discount range based on market conditions
+            base_discount = max_discount * market_saturation * (1 - brand_strength * 0.5)
+            
+            # Ensure base discount is within reasonable limits
+            discount_from_market = max(min_discount, min(base_discount, max_discount))
+            
+            # Calculate competitive price range
+            price_min = predicted_price * (1 - discount_from_market)
+            price_max = predicted_price * (1 + 0.05)  # Allow slight premium of up to 5%
+            
+            # Ensure price covers manufacturing cost plus minimum margin
+            min_viable_price = manufacturing_cost * (1 + min_margin)
+            
+            # Adjust prices to ensure minimum viability
+            if price_min < min_viable_price:
+                price_min = min_viable_price
+                
+                # If even the maximum price doesn't allow minimum margin, adjust it
+                if price_max < min_viable_price:
+                    price_max = min_viable_price * 1.05  # 5% above minimum viable price
+            
+            # Calculate recommended price based on market conditions
+            # In saturated markets with weak brand, aim for lower end of range
+            # In less saturated markets with strong brand, aim for higher end
+            position_in_range = (1 - market_saturation) * 0.6 + brand_strength * 0.4
+            recommended_price = price_min + position_in_range * (price_max - price_min)
+            
+            # Calculate profit margin
+            profit_amount = recommended_price - manufacturing_cost
+            profit_margin_pct = profit_amount / recommended_price if recommended_price > 0 else 0
+            
+            # Calculate discount from predicted market price
+            discount_pct = (predicted_price - recommended_price) / predicted_price if predicted_price > 0 else 0
+            
+            # Get the strategy name
+            strategy_name = self._get_pricing_strategy_name(
+                category, 
+                market_saturation, 
+                brand_strength, 
+                profit_margin_pct, 
+                discount_pct
+            )
+            
+            # Package results
+            result = {
+                "predicted_market_price": round(predicted_price, 2),
+                "price_range_min": round(price_min, 2),
+                "price_range_max": round(price_max, 2),
+                "recommended_price": round(recommended_price, 2),
+                "discount_from_market": round(discount_pct * 100, 1),
+                "profit_margin_amount": round(profit_amount, 2),
+                "profit_margin_percentage": round(profit_margin_pct * 100, 1),
+                "price_to_cost_ratio": round(price_to_cost_ratio, 2),
+                "strategy_name": strategy_name,
+                "market_conditions": "Saturated" if market_saturation > 0.7 else 
+                                    "Moderate" if market_saturation > 0.3 else "Emerging",
+                "brand_position": "Strong" if brand_strength > 0.7 else 
+                                 "Moderate" if brand_strength > 0.3 else "Weak",
+                "viability_issue": viability_issue,
+                "high_cost_warning": high_cost_warning
             }
             
-            return recommendation
-        
-        # Normal competitive pricing scenario
-        # Adjust discount factor based on market_saturation and brand_strength
-        base_min, base_max = self.aggressive_discount_range
-        
-        # Market saturation adjustment - more saturated markets need higher discounts
-        saturation_factor = {
-            'low': -0.05,     # less discount needed
-            'medium': 0,      # baseline
-            'high': 0.05      # more discount needed
-        }.get(market_saturation.lower(), 0)
-        
-        # Brand strength adjustment - stronger brands can use lower discounts
-        brand_factor = {
-            'low': 0.05,      # more discount needed
-            'medium': 0,      # baseline
-            'high': -0.05     # less discount needed
-        }.get(brand_strength.lower(), 0)
-        
-        # Calculate adjusted discount range
-        min_discount = base_min + saturation_factor + brand_factor
-        max_discount = base_max + saturation_factor + brand_factor
-        
-        # Ensure discount range is reasonable
-        min_discount = max(0.05, min(0.35, min_discount))  # Between 5-35%
-        max_discount = max(0.10, min(0.40, max_discount))  # Between 10-40%
-        
-        # Calculate competitive price range
-        competitive_min = predicted_market_price * (1 - max_discount)
-        competitive_max = predicted_market_price * (1 - min_discount)
-        
-        # Get category-specific minimum margin or use default
-        category_min_margin = self.category_min_margins.get(category, self.min_profit_margin)
-        
-        # Ensure minimum profit margin based on category
-        cost_plus_min_margin = manufacturing_cost / (1 - category_min_margin)
-        
-        # Final recommended price shouldn't be lower than our minimum margin
-        recommended_price = max(competitive_min, cost_plus_min_margin)
-        
-        # If recommended price is higher than max competitive price, adjust it
-        if recommended_price > competitive_max:
-            # Only if the difference is small, otherwise keep minimum viable price
-            if (recommended_price - competitive_max) / competitive_max < 0.1:  # Less than 10% difference
-                recommended_price = competitive_max
-        
-        # Calculate actual margin we'll get
-        profit_margin = (recommended_price - manufacturing_cost) / recommended_price
-        profit_margin_percentage = profit_margin * 100
-        
-        # Calculate discount from market price
-        discount_from_market = ((predicted_market_price - recommended_price) / predicted_market_price) * 100
-        
-        # Calculate price elasticity (estimated)
-        estimated_elasticity = -1.5  # Default elasticity
-        if category in self.category_benchmarks:
-            # Categories with wider price ranges tend to have higher elasticity
-            q1 = self.category_benchmarks[category].get('q1', 0)
-            q3 = self.category_benchmarks[category].get('q3', 0)
-            if q1 > 0 and q3 > q1:
-                price_range_ratio = q3 / q1
-                # Scale elasticity based on price range (wider range = higher elasticity)
-                estimated_elasticity = -1.0 - (0.5 * min(price_range_ratio / 3, 1.0))
-        
-        # Calculate expected sales impact
-        sales_impact_percentage = -estimated_elasticity * discount_from_market
-        
-        # Get the percentile position in the market
-        percentile_position = None
-        if category in self.category_benchmarks:
-            q1 = self.category_benchmarks[category].get('q1', 0)
-            q3 = self.category_benchmarks[category].get('q3', 0)
-            if q1 > 0 and q3 > q1:
-                percentile_position = self._calculate_percentile_position(
-                    recommended_price, q1, q3)
-        
-        # Get a descriptive name for the pricing strategy
-        strategy_name = self._get_pricing_strategy_name(
-            market_saturation, brand_strength, profit_margin, discount_from_market, category)
-        
-        # Build the recommendation object
-        recommendation = {
-            'category': category,
-            'predicted_market_price': float(predicted_market_price),
-            'manufacturing_cost': float(manufacturing_cost),
-            'recommended_price': float(recommended_price),
-            'min_competitive_price': float(competitive_min),
-            'max_competitive_price': float(competitive_max),
-            'minimum_viable_price': float(cost_plus_min_margin),
-            'profit_margin': float(profit_margin),
-            'profit_margin_percentage': float(profit_margin_percentage),
-            'discount_from_market': float(discount_from_market),
-            'market_saturation': market_saturation,
-            'brand_strength': brand_strength,
-            'price_elasticity': float(estimated_elasticity),
-            'estimated_sales_impact': float(sales_impact_percentage),
-            'strategy': strategy_name
-        }
-        
-        # Add market position info if available
-        if percentile_position is not None:
-            recommendation['market_position_percentile'] = float(percentile_position)
-        
-        return recommendation
+            return result
+            
+        except Exception as e:
+            logger.error(f"Error in competitive pricing: {str(e)}")
+            logger.error(traceback.format_exc())
+            return {"error": str(e)}
     
     def _calculate_percentile_position(self, price, q1, q3):
         """Calculate approximate percentile position based on quartile range"""
@@ -937,7 +722,7 @@ class PricingStrategy:
             # Add profit margin and discount info
             profit_margin = recommendation['profit_margin_percentage']
             discount = recommendation['discount_from_market']
-            strategy = recommendation['strategy']
+            strategy = recommendation['strategy_name']
             
             ax1.text(min_price + (max_price - min_price) * 0.02, 0.95, 
                     f"Strategy: {strategy}", fontsize=12, fontweight='bold')
@@ -1016,6 +801,40 @@ class PricingStrategy:
             if 'fig' in locals():
                 plt.close(fig)
 
+    def _select_model(self, category):
+        """
+        Select the appropriate model and standardization parameters for a given product category
+        
+        Args:
+            category: Product category (str)
+            
+        Returns:
+            Tuple of (model, feature_names, feature_means, feature_stds)
+        """
+        try:
+            # Check if model exists for this category
+            if category not in self.models:
+                logger.warning(f"No model found for category: {category}")
+                return None, None, None, None
+            
+            model_data = self.models.get(category, {})
+            
+            # Extract model and standardization parameters
+            model = model_data.get('model')
+            feature_means = model_data.get('means')
+            feature_stds = model_data.get('stds')
+            expected_features = model_data.get('expected_features')
+            
+            if model is None:
+                logger.warning(f"Model object not found for category: {category}")
+                return None, None, None, None
+                
+            return model, expected_features, feature_means, feature_stds
+            
+        except Exception as e:
+            logger.error(f"Error selecting model for category {category}: {str(e)}")
+            return None, None, None, None
+
 def test_pricing_strategy():
     """Test function to demonstrate the pricing strategy"""
     try:
@@ -1063,11 +882,11 @@ def test_pricing_strategy():
         logger.info(f"Testing with features: {features}")
         
         # Test prediction
-        prediction = strategy.predict_price(features, sample_category)
+        prediction = strategy.predict_price(sample_category, features)
         
         if prediction:
             logger.info(f"Prediction successful: {prediction}")
-            logger.info(f"Predicted market price: ₹{prediction['predicted_market_price']:.2f}")
+            logger.info(f"Predicted market price: ₹{prediction:.2f}")
             
             # Test recommendations with different scenarios
             scenarios = [
@@ -1080,8 +899,8 @@ def test_pricing_strategy():
                 try:
                     logger.info(f"Testing scenario: {scenario['name']}")
                     recommendation = strategy.get_competitive_price(
-                        prediction, 
-                        features['manufacturing_cost'],
+                        features,
+                        sample_category,
                         scenario['saturation'],
                         scenario['strength']
                     )
@@ -1091,7 +910,7 @@ def test_pricing_strategy():
                         logger.info(f"Recommended price: ₹{recommendation['recommended_price']:.2f}")
                         logger.info(f"Discount from market: {recommendation['discount_from_market']:.1f}%")
                         logger.info(f"Profit margin: {recommendation['profit_margin_percentage']:.1f}%")
-                        logger.info(f"Strategy: {recommendation['strategy']}")
+                        logger.info(f"Strategy: {recommendation['strategy_name']}")
                         
                         # Save visualization
                         try:
