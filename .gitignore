@@ -38,8 +38,14 @@ logs/
 
 # Project specific
 .dist/
+
+# Large data files
 *.csv
-!requirements.txt
+# But keep any sample data
+!data/examples/*.csv
+
+# Keep important model files
+!models/improved/category_benchmarks.json
 
 # Jupyter Notebook
 .ipynb_checkpoints

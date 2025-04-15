@@ -22,7 +22,7 @@ st.set_page_config(
 
 # Initialize session state
 if 'pricing_strategy' not in st.session_state:
-    st.session_state.pricing_strategy = PricingStrategy()
+    st.session_state.pricing_strategy = PricingStrategy(models_dir='models/category_models')
     # Load benchmarks
     st.session_state.pricing_strategy.load_category_benchmarks()
     
@@ -44,8 +44,208 @@ st.sidebar.markdown("This tool helps new sellers enter the market with competiti
 available_categories = list(st.session_state.pricing_strategy.models.keys())
 
 if not available_categories:
-    st.error("No trained models available. Please run the model training scripts first.")
-    st.stop()
+    # Create mock categories for demonstration purposes
+    mock_categories = [
+        "Audio", "Cameras", "Climate Control", "Computers", 
+        "Home Entertainment", "Home Improvement", "Home Office", 
+        "Kitchen Appliances", "Mobile Accessories", "Smartwatches"
+    ]
+    
+    st.warning("""
+    ### ⚠️ Demo Mode Activated
+    
+    No trained models were found. The app is running in demonstration mode with sample data.
+    
+    For full functionality, please follow these steps:
+    1. Run the data preparation and feature engineering scripts
+    2. Train the models using `improved_model_development.py`
+    3. Restart the app
+    
+    In demo mode, all pricing recommendations are based on simplified calculations.
+    """)
+    
+    # Create a simplified pricing strategy class for demonstration
+    class DemoPricingStrategy:
+        def __init__(self):
+            # Add required attributes to prevent errors
+            self.calibration_factors = {
+                "Audio": 1.25,
+                "Cameras": 1.2,
+                "Climate Control": 1.2,
+                "Computers": 1.2,
+                "Home Entertainment": 1.45,
+                "Home Improvement": 1.2,
+                "Home Office": 1.45,
+                "Kitchen Appliances": 1.1,
+                "Mobile Accessories": 1.2,
+                "Smartwatches": 1.05
+            }
+            
+            self.category_thresholds = {
+                "Audio": (0.85, 1.0),
+                "Cameras": (0.85, 1.0),
+                "Climate Control": (0.85, 1.0),
+                "Computers": (0.85, 1.0),
+                "Home Entertainment": (0.85, 1.0),
+                "Home Improvement": (0.85, 1.0),
+                "Home Office": (0.85, 1.0),
+                "Kitchen Appliances": (0.85, 1.0),
+                "Mobile Accessories": (0.85, 1.0),
+                "Smartwatches": (0.85, 1.0)
+            }
+            
+            self.category_min_margins = {
+                "Audio": 0.12,
+                "Cameras": 0.10,
+                "Climate Control": 0.09,
+                "Computers": 0.09,
+                "Home Entertainment": 0.12,
+                "Home Improvement": 0.10,
+                "Home Office": 0.10,
+                "Kitchen Appliances": 0.08,
+                "Mobile Accessories": 0.07,
+                "Smartwatches": 0.05
+            }
+                
+        def predict_price(self, features, category):
+            # Simple price calculation based on features
+            base_price = features['manufacturing_cost'] * features['price_to_cost_ratio']
+            adjustment = (features['rating'] / 5.0) * 0.2 * base_price  # Up to 20% quality premium
+            predicted_price = base_price + adjustment
+            
+            return {
+                'category': category,
+                'predicted_market_price': predicted_price,
+                'confidence_lower': predicted_price * 0.8,
+                'confidence_upper': predicted_price * 1.2,
+                'model_mape': 0.15,
+                'model_within_10pct': 0.8
+            }
+        
+        def get_competitive_price(self, prediction, manufacturing_cost, 
+                                market_saturation, brand_strength):
+            predicted_price = prediction['predicted_market_price']
+            
+            # Discount based on market conditions
+            discount_map = {
+                'low': 0.05,    # 5% discount in low competition
+                'medium': 0.10, # 10% discount in medium competition
+                'high': 0.20    # 20% discount in high competition
+            }
+            
+            # Adjust for brand strength
+            brand_adjustment = {
+                'low': 0.05,    # 5% additional discount for new brands
+                'medium': 0.00, # No adjustment for medium brands
+                'high': -0.05   # 5% premium for strong brands
+            }
+            
+            discount = discount_map[market_saturation] + brand_adjustment[brand_strength]
+            recommended_price = predicted_price * (1 - discount)
+            
+            # Ensure minimum profit margin of 10%
+            min_viable_price = manufacturing_cost * 1.1
+            if recommended_price < min_viable_price:
+                recommended_price = min_viable_price
+            
+            # Strategy name based on discount
+            if discount <= 0:
+                strategy = "Premium Positioning"
+            elif discount < 0.1:
+                strategy = "Competitive Positioning"
+            elif discount < 0.2:
+                strategy = "Value-Oriented Strategy"
+            else:
+                strategy = "Aggressive Market Entry"
+            
+            # Calculate profit margin
+            profit = recommended_price - manufacturing_cost
+            profit_margin = profit / recommended_price * 100
+            
+            return {
+                'category': prediction['category'],
+                'predicted_market_price': predicted_price,
+                'recommended_price': recommended_price,
+                'manufacturing_cost': manufacturing_cost,
+                'min_competitive_price': predicted_price * 0.9,
+                'max_competitive_price': predicted_price * 1.05,
+                'minimum_viable_price': min_viable_price,
+                'discount_from_market': discount * 100,
+                'profit_margin_percentage': profit_margin,
+                'strategy': strategy,
+                'estimated_sales_impact': discount * 75  # Simple elasticity model
+            }
+        
+        def visualize_pricing_recommendation(self, recommendation, save_path=None):
+            try:
+                import matplotlib.pyplot as plt
+                import numpy as np
+                
+                category = recommendation['category']
+                market_price = recommendation['predicted_market_price']
+                recommended_price = recommendation['recommended_price']
+                manufacturing_cost = recommendation['manufacturing_cost']
+                min_competitive_price = recommendation['min_competitive_price']
+                max_competitive_price = recommendation['max_competitive_price']
+                minimum_viable_price = recommendation['minimum_viable_price']
+                
+                # Create figure
+                fig, ax = plt.subplots(figsize=(10, 6))
+                
+                # Plot price points
+                prices = [manufacturing_cost, minimum_viable_price, min_competitive_price, 
+                          recommended_price, max_competitive_price, market_price]
+                labels = ['Manufacturing Cost', 'Minimum Viable Price', 'Min Competitive', 
+                          'Recommended Price', 'Max Competitive', 'Market Price']
+                colors = ['gray', 'orange', 'green', 'blue', 'green', 'red']
+                
+                # Plot points
+                for i, (price, label, color) in enumerate(zip(prices, labels, colors)):
+                    ax.scatter(price, 0.5, color=color, s=100, zorder=5)
+                    ax.annotate(f"{label}\n₹{price:.2f}", 
+                                (price, 0.5), 
+                                xytext=(0, 20 if i % 2 == 0 else -20),
+                                textcoords="offset points",
+                                ha='center', 
+                                va='center' if i % 2 == 0 else 'center')
+                
+                # Highlight competitive range
+                ax.axvspan(min_competitive_price, max_competitive_price, alpha=0.2, color='green')
+                
+                # Format plot
+                ax.set_xlim(min(prices) * 0.9, max(prices) * 1.1)
+                ax.set_ylim(0, 1)
+                ax.set_title(f"Pricing Strategy for {category}", fontsize=14)
+                ax.set_xlabel("Price (₹)")
+                ax.set_yticks([])
+                
+                # Add strategy info
+                strategy = recommendation['strategy']
+                discount = recommendation['discount_from_market']
+                profit_margin = recommendation['profit_margin_percentage']
+                
+                plt.figtext(0.02, 0.02, 
+                          f"Strategy: {strategy} | Discount: {discount:.1f}% | Profit Margin: {profit_margin:.1f}%",
+                          ha="left", fontsize=12)
+                
+                plt.tight_layout()
+                
+                if save_path:
+                    plt.savefig(save_path)
+                
+                return fig
+            except Exception as e:
+                import traceback
+                st.error(f"Error creating visualization: {str(e)}\n{traceback.format_exc()}")
+                return None
+            finally:
+                # Ensure figure is closed to prevent memory leaks
+                if 'fig' in locals():
+                    plt.close(fig)
+    
+    # Use demo strategy when models aren't available
+    st.session_state.pricing_strategy = DemoPricingStrategy()
+    available_categories = mock_categories
 
 # Main content
 st.title("Competitive Pricing Strategy Tool")

@@ -110,35 +110,78 @@ class PricingStrategy:
         """Load all available models and their metrics"""
         logger.info("Loading models and metrics")
         
-        # Find all categories with models
-        categories = [d for d in os.listdir(self.models_dir) 
-                     if os.path.isdir(os.path.join(self.models_dir, d))]
-        
-        for category in categories:
-            try:
-                # Load the model
-                model_path = os.path.join(self.models_dir, category, 'model.pkl')
-                if os.path.exists(model_path):
-                    with open(model_path, 'rb') as f:
-                        model_data = pickle.load(f)
+        try:
+            # Check if the models directory exists
+            if not os.path.exists(self.models_dir):
+                logger.error(f"Models directory not found: {self.models_dir}")
+                return
+            
+            # Get all files in the directory
+            files = os.listdir(self.models_dir)
+            
+            # First, try the original approach (subdirectories)
+            categories = [d for d in files if os.path.isdir(os.path.join(self.models_dir, d))]
+            
+            if categories:
+                # Use the subdirectory approach
+                for category in categories:
+                    try:
+                        # Load the model
+                        model_path = os.path.join(self.models_dir, category, 'model.pkl')
+                        if os.path.exists(model_path):
+                            with open(model_path, 'rb') as f:
+                                model_data = pickle.load(f)
+                                
+                            # Load metrics
+                            metrics_path = os.path.join(self.models_dir, category, 'metrics.json')
+                            if os.path.exists(metrics_path):
+                                with open(metrics_path, 'r') as f:
+                                    metrics = json.load(f)
+                            else:
+                                metrics = {}
+                                
+                            # Store in dictionaries
+                            self.models[category] = model_data
+                            self.metrics[category] = metrics
+                            
+                            logger.info(f"Loaded model for {category} from subdirectory")
+                    except Exception as e:
+                        logger.error(f"Error loading model for {category} from subdirectory: {str(e)}")
+            else:
+                # Try the flat file approach - look for files named Category_model.pkl
+                model_files = [f for f in files if f.endswith('_model.pkl')]
+                
+                for model_file in model_files:
+                    try:
+                        # Extract category name from filename (remove _model.pkl)
+                        category = model_file.replace('_model.pkl', '')
                         
-                    # Load metrics
-                    metrics_path = os.path.join(self.models_dir, category, 'metrics.json')
-                    if os.path.exists(metrics_path):
-                        with open(metrics_path, 'r') as f:
-                            metrics = json.load(f)
-                    else:
-                        metrics = {}
+                        # Load the model
+                        model_path = os.path.join(self.models_dir, model_file)
+                        with open(model_path, 'rb') as f:
+                            model_data = pickle.load(f)
+                            
+                        # Load metrics
+                        metrics_path = os.path.join(self.models_dir, f"{category}_metrics.json")
+                        if os.path.exists(metrics_path):
+                            with open(metrics_path, 'r') as f:
+                                metrics = json.load(f)
+                        else:
+                            metrics = {}
+                            
+                        # Store in dictionaries
+                        self.models[category] = model_data
+                        self.metrics[category] = metrics
                         
-                    # Store in dictionaries
-                    self.models[category] = model_data
-                    self.metrics[category] = metrics
-                    
-                    logger.info(f"Loaded model for {category}")
-            except Exception as e:
-                logger.error(f"Error loading model for {category}: {str(e)}")
-        
-        logger.info(f"Loaded {len(self.models)} models")
+                        logger.info(f"Loaded model for {category} from flat file structure")
+                    except Exception as e:
+                        logger.error(f"Error loading model for {model_file}: {str(e)}")
+            
+            logger.info(f"Loaded {len(self.models)} models")
+        except Exception as e:
+            logger.error(f"Error in _load_models_and_metrics: {str(e)}")
+            import traceback
+            logger.error(traceback.format_exc())
         
     def load_category_benchmarks(self, file_path='logs/outlier_stats.json'):
         """
@@ -150,9 +193,10 @@ class PricingStrategy:
         try:
             # Try multiple paths for benchmark data
             potential_paths = [
-                file_path,  # Original path (logs/outlier_stats.json)
-                'models/category_benchmarks.json',  # Alternative path
-                'models/improved/category_benchmarks.json',  # Another alternative
+                file_path,                                 # Original path (logs/outlier_stats.json)
+                'models/category_benchmarks.json',         # Alternative path
+                'models/improved/category_benchmarks.json', # Another alternative
+                os.path.join(self.models_dir, 'category_benchmarks.json')  # In the models directory
             ]
             
             loaded = False
@@ -371,24 +415,24 @@ class PricingStrategy:
                 
                 logger.info(f"Using {len(model_features_df.columns)} features for prediction")
                 
-                # Scale the features - ensure we respect column order
-                try:
-                    # Use column names when scaling to avoid the feature name warning
-                    features_array = scaler.transform(model_features_df)
-                except UserWarning:
-                    # If there's still a warning, we'll silence it and continue
-                    import warnings
-                    with warnings.catch_warnings():
-                        warnings.filterwarnings("ignore", category=UserWarning, 
-                                               message="X does not have valid feature names")
-                        features_array = scaler.transform(model_features_df)
+                # Properly handle feature names for sklearn 1.0+ compatibility
+                # Convert to array with matching feature names to prevent warnings
+                import warnings
+                with warnings.catch_warnings():
+                    warnings.filterwarnings("ignore", category=UserWarning)
+                    # Create a numpy array in the correct order
+                    input_array = model_features_df[expected_features].values
+                    # Scale the features
+                    features_array = scaler.transform(input_array)
                 
                 # Make prediction
                 predicted_value = model.predict(features_array)[0]
             else:
                 # Fallback for models without feature_names_in_
-                # Convert to numpy array and hope for the best
-                features_array = scaler.transform(features_df)
+                # Just use all features and hope they match
+                logger.warning("Model doesn't have feature_names_in_ attribute, using all features")
+                all_features = features_df.values
+                features_array = scaler.transform(all_features)
                 predicted_value = model.predict(features_array)[0]
             
             # If we used log transformation, convert back
@@ -739,14 +783,14 @@ class PricingStrategy:
     
     def visualize_pricing_recommendation(self, recommendation, save_path=None):
         """
-        Visualize the pricing recommendation with market context
+        Visualize the pricing recommendation with a chart
         
         Parameters:
         -----------
         recommendation : dict
-            The pricing recommendation
+            Pricing recommendation from get_competitive_price
         save_path : str, optional
-            If provided, the visualization will be saved to this path
+            Path to save the visualization
             
         Returns:
         --------
@@ -876,8 +920,8 @@ class PricingStrategy:
                         xytext=(discount+5, revenue_impact_at_discount-10),
                         arrowprops=dict(arrowstyle='->', color='green'))
             
-            # Adjust layout - fix tight layout warning
-            plt.tight_layout(rect=[0, 0, 1, 0.95])  # Leave room at the top
+            # Use figure.subplots_adjust instead of tight_layout to avoid warnings
+            fig.subplots_adjust(left=0.1, right=0.9, top=0.9, bottom=0.1, hspace=0.3)
             
             # Save if path provided
             if save_path:
@@ -889,6 +933,10 @@ class PricingStrategy:
         except Exception as e:
             logger.error(f"Error visualizing pricing recommendation: {str(e)}")
             return None
+        finally:
+            # Ensure the figure is closed to prevent memory leaks
+            if 'fig' in locals():
+                plt.close(fig)
 
 def test_pricing_strategy():
     """Test function to demonstrate the pricing strategy"""
