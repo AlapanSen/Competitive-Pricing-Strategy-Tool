@@ -223,10 +223,10 @@ with tab1:
                         os.makedirs('pricing_strategies', exist_ok=True)
                         
                         try:
-                        with open(filepath, 'w') as f:
-                            json.dump(recommendation, f, indent=4)
+                            with open(filepath, 'w') as f:
+                                json.dump(recommendation, f, indent=4)
                             
-                        st.success(f"Pricing recommendation saved to {filepath}")
+                            st.success(f"Pricing recommendation saved to {filepath}")
                         except Exception as e:
                             st.warning(f"Unable to save recommendation to file: {str(e)}")
                         
@@ -346,9 +346,9 @@ with tab2:
                     df['brand_strength'] = 'Medium'
                 
                 # Process each product
-                        results = []
+                results = []
                 
-                        progress_bar = st.progress(0)
+                progress_bar = st.progress(0)
                 for i, row in enumerate(df.iterrows()):
                     index, product = row
                     
@@ -358,7 +358,7 @@ with tab2:
                     # Get prediction for valid categories only
                     if product['category'] in available_categories:
                         # Prepare features
-                                features = {
+                        features = {
                             'rating': product['rating'],
                             'rating_count': product['rating_count'],
                             'discount_percentage': product['discount_percentage'],
@@ -369,18 +369,18 @@ with tab2:
                         }
                         
                         # Get prediction
-                                prediction = st.session_state.pricing_strategy.predict_price(
+                        prediction = st.session_state.pricing_strategy.predict_price(
                             features, product['category'])
-                                
-                                if prediction:
-                                    # Get recommendation
+                        
+                        if prediction:
+                            # Get recommendation
                             market_sat = str(product['market_saturation']).lower()
                             brand_str = str(product['brand_strength']).lower()
                             
-                                    recommendation = st.session_state.pricing_strategy.get_competitive_price(
+                            recommendation = st.session_state.pricing_strategy.get_competitive_price(
                                 prediction, product['manufacturing_cost'], market_sat, brand_str)
-                                    
-                                    if recommendation:
+                            
+                            if recommendation:
                                 # Add to results
                                 result = {
                                     'product_name': product['product_name'],
@@ -402,7 +402,7 @@ with tab2:
                                 results.append(result)
                 
                 # Create results dataframe
-                        if results:
+                if results:
                     results_df = pd.DataFrame(results)
                     
                     # Display results
@@ -417,15 +417,15 @@ with tab2:
                     )
                     
                     # Save results
-                            timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+                    timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
                     try:
                         # Save to JSON format
-                            filepath = os.path.join('pricing_strategies', f"batch_pricing_{timestamp}.json")
+                        filepath = os.path.join('pricing_strategies', f"batch_pricing_{timestamp}.json")
                         os.makedirs('pricing_strategies', exist_ok=True)
-                            
-                            with open(filepath, 'w') as f:
-                                json.dump(results, f, indent=4)
-                            
+                        
+                        with open(filepath, 'w') as f:
+                            json.dump(results, f, indent=4)
+                        
                         st.success(f"Results saved to {filepath}")
                         
                         # Add download button
@@ -478,34 +478,34 @@ with tab3:
                 'max_price': max_price
             }
             
-                    # Create layout
-                    col1, col2 = st.columns(2)
-                    
-                    # Extract data for selected category
-                    cat_stats = market_stats[analysis_category]
-                    
-                    # Display summary statistics
-                    with col1:
-                        st.subheader("Price Distribution")
-                        
-                        # Create pretty metrics
-                        metric_cols = st.columns(2)
-                        with metric_cols[0]:
-                            st.metric("Median Price", f"₹{cat_stats.get('median_price', 0):.2f}")
-                            st.metric("25th Percentile (Q1)", f"₹{cat_stats.get('q1', 0):.2f}")
-                            st.metric("75th Percentile (Q3)", f"₹{cat_stats.get('q3', 0):.2f}")
-                        
-                        with metric_cols[1]:
-                            st.metric("Price Range", f"₹{cat_stats.get('max_price', 0) - cat_stats.get('min_price', 0):.2f}")
-                            st.metric("Min Price", f"₹{cat_stats.get('min_price', 0):.2f}")
-                            st.metric("Max Price", f"₹{cat_stats.get('max_price', 0):.2f}")
-                        
-                        # Show distribution visualization
-                        try:
-                            img_path = f"visualizations/{analysis_category}_price_distribution.png"
-                            if os.path.exists(img_path):
+            # Create layout
+            col1, col2 = st.columns(2)
+            
+            # Extract data for selected category
+            cat_stats = market_stats[analysis_category]
+            
+            # Display summary statistics
+            with col1:
+                st.subheader("Price Distribution")
+                
+                # Create pretty metrics
+                metric_cols = st.columns(2)
+                with metric_cols[0]:
+                    st.metric("Median Price", f"₹{cat_stats.get('median_price', 0):.2f}")
+                    st.metric("25th Percentile (Q1)", f"₹{cat_stats.get('q1', 0):.2f}")
+                    st.metric("75th Percentile (Q3)", f"₹{cat_stats.get('q3', 0):.2f}")
+                
+                with metric_cols[1]:
+                    st.metric("Price Range", f"₹{cat_stats.get('max_price', 0) - cat_stats.get('min_price', 0):.2f}")
+                    st.metric("Min Price", f"₹{cat_stats.get('min_price', 0):.2f}")
+                    st.metric("Max Price", f"₹{cat_stats.get('max_price', 0):.2f}")
+                
+                # Show distribution visualization
+                try:
+                    img_path = f"visualizations/{analysis_category}_price_distribution.png"
+                    if os.path.exists(img_path):
                         st.image(img_path, use_container_width=True)
-                            else:
+                    else:
                         # Create a simple visualization instead
                         fig, ax = plt.subplots(figsize=(8, 4))
                         x = np.linspace(cat_stats['min_price'], cat_stats['max_price'], 1000)
@@ -522,11 +522,11 @@ with tab3:
                         ax.set_ylabel('Density')
                         plt.tight_layout()
                         st.pyplot(fig)
-                        except Exception as e:
-                            st.error(f"Error displaying distribution: {str(e)}")
-                    
+                except Exception as e:
+                    st.error(f"Error displaying distribution: {str(e)}")
+            
             # Display pricing strategy information
-                    with col2:
+            with col2:
                 st.subheader("Pricing Strategy Recommendations")
                 
                 # Pricing tiers
@@ -631,11 +631,11 @@ with tab4:
         
         # Check if directory exists
         if os.path.exists('pricing_strategies'):
-        pricing_files = sorted(
-            [f for f in os.listdir('pricing_strategies') if f.endswith('.json')],
-            key=lambda x: os.path.getmtime(os.path.join('pricing_strategies', x)),
-            reverse=True
-        )
+            pricing_files = sorted(
+                [f for f in os.listdir('pricing_strategies') if f.endswith('.json')],
+                key=lambda x: os.path.getmtime(os.path.join('pricing_strategies', x)),
+                reverse=True
+            )
         
         if pricing_files:
             st.write(f"Found {len(pricing_files)} saved pricing strategies")
@@ -754,7 +754,7 @@ with tab5:
         
         # Explanations
         with st.expander("What do these settings mean?"):
-        st.markdown("""
+            st.markdown("""
                 **Calibration Factor**: Adjusts price predictions to match real market prices for this category.
                 Higher values mean our model typically underpredicts prices for this category.
         
@@ -769,7 +769,7 @@ with tab5:
         
                 **Q1/Q3 Benchmarks**: 25th and 75th percentile price points for this category.
                 Used to position products in the market and evaluate competitiveness.
-        """)
+            """)
     else:
         st.error("Pricing strategy not initialized")
 

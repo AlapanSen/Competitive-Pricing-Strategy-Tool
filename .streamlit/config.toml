@@ -9,5 +9,9 @@ font = "sans serif"
 enableCORS = false
 enableXsrfProtection = true
 
+[runner]
+magicEnabled = true
+fastReruns = true
+
 [browser]
 gatherUsageStats = false 
