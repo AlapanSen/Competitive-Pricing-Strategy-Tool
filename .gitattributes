@@ -1,0 +1,5 @@
+*.pkl binary
+*.model binary
+models/** binary
+models/category_models/* binary
+models/improved/category_models/* binary 

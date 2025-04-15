@@ -27,7 +27,6 @@ env/
 
 # Logs and data
 *.log
-*.pkl
 .ipynb_checkpoints
 notebooks/.ipynb_checkpoints/
 
@@ -40,7 +39,5 @@ notebooks/.ipynb_checkpoints/
 .streamlit/secrets.toml
 
 # Project specific
-pricing_strategies/
 visualizations/
-logs/
 .dist/ 
