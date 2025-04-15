@@ -37,21 +37,17 @@ def get_download_link(df, filename, text):
 
 # Initialize session state
 if 'pricing_strategy' not in st.session_state:
-    # Explicitly specify the models directory path for Streamlit Cloud compatibility
-    models_dir = os.path.join(os.getcwd(), 'models', 'improved', 'category_models')
-    st.session_state.pricing_strategy = PricingStrategy(models_dir=models_dir)
+    st.session_state.pricing_strategy = PricingStrategy()
     # Load benchmarks
     st.session_state.pricing_strategy.load_category_benchmarks()
     
     # Debug info about benchmarks
     benchmark_info = {
-        "Models Directory": models_dir,
-        "Models Loaded": len(st.session_state.pricing_strategy.models),
-        "Models Found": True if len(st.session_state.pricing_strategy.models) > 0 else False,
         "Benchmark Categories": list(st.session_state.pricing_strategy.category_benchmarks.keys()),
-        "Total Categories": len(st.session_state.pricing_strategy.category_benchmarks)
+        "Total Categories": len(st.session_state.pricing_strategy.category_benchmarks),
+        "Sample Data": str(list(st.session_state.pricing_strategy.category_benchmarks.values())[:2])
     }
-    st.sidebar.expander("Debug Information", expanded=False).write(benchmark_info)
+    st.sidebar.expander("Debug: Benchmark Data", expanded=False).write(benchmark_info)
 
 # Sidebar
 # Using a hosted image instead of local
@@ -63,7 +59,6 @@ st.sidebar.markdown("This tool helps new sellers enter the market with competiti
 # Get available categories
 available_categories = list(st.session_state.pricing_strategy.models.keys())
 
-# Immediately check if models were successfully loaded, if not use demo mode
 if not available_categories:
     # When no models are available, create default categories for demo
     default_categories = [
@@ -73,27 +68,21 @@ if not available_categories:
     ]
     
     st.warning("""
-    ⚠️ No trained models could be loaded. Running in demo mode with simulated models.
+    ⚠️ No trained models found. Running in demo mode with simulated models.
+    You can still explore the interface and functionality.
     """)
     
     # Create a simulated pricing strategy
     class SimulatedPricingStrategy(PricingStrategy):
         def predict_price(self, product_features, category):
             """Simulate a price prediction"""
-            import logging
-            logger = logging.getLogger()
-            logger.info(f"Using simulated prediction for {category}")
-            
             base_price = product_features['manufacturing_cost'] * 2.5
             if 'rating' in product_features:
                 base_price *= (1 + 0.1 * (product_features['rating'] - 3))
             
             return {
                 'predicted_market_price': base_price,
-                'confidence_lower': base_price * 0.85,
-                'confidence_upper': base_price * 1.15,
-                'model_mape': 0.15,
-                'model_within_10pct': 0.8,
+                'confidence': 0.8,
                 'category': category
             }
     
@@ -204,10 +193,10 @@ with tab1:
         'log_manufacturing_cost': np.log1p(manufacturing_cost)
     }
     
-    # Button to generate pricing
+    # Generate pricing recommendation
     if st.button("Generate Pricing Strategy"):
         with st.spinner("Analyzing market conditions and generating recommendation..."):
-            # Make prediction - no try/except, let errors show
+            # Make prediction
             prediction = st.session_state.pricing_strategy.predict_price(features, category)
             
             if prediction:
@@ -236,7 +225,7 @@ with tab1:
                         try:
                             with open(filepath, 'w') as f:
                                 json.dump(recommendation, f, indent=4)
-                                
+                            
                             st.success(f"Pricing recommendation saved to {filepath}")
                         except Exception as e:
                             st.warning(f"Unable to save recommendation to file: {str(e)}")
@@ -259,24 +248,9 @@ with tab1:
                         if 'viability_issue' in recommendation and recommendation['viability_issue']:
                             st.error("""
                             ### ⚠️ Product Viability Issue
-                            The manufacturing cost is too high relative to the market price, making 
-                            this product difficult to sell profitably. Consider:
-                            1. Reducing manufacturing costs
-                            2. Finding premium market segments
-                            3. Adding unique features that justify a higher price
+                            The manufacturing cost is too high relative to the market price, 
+                            making it difficult to price competitively while maintaining minimum profit margins.
                             """)
-                            
-                            st.info(f"""
-                            To make this product viable, manufacturing costs would need to be reduced 
-                            to approximately ₹{recommendation['recommended_max_cost']:.2f} 
-                            (a reduction of ₹{recommendation['cost_reduction_needed']:.2f}).
-                            """)
-                    else:
-                        st.error("Failed to generate visualization")
-                else:
-                    st.error("Failed to generate pricing recommendation")
-            else:
-                st.error("Failed to predict market price")
 
 # Tab 2: Batch Pricing
 with tab2:
@@ -397,7 +371,7 @@ with tab2:
                         # Get prediction
                         prediction = st.session_state.pricing_strategy.predict_price(
                             features, product['category'])
-                        
+                                
                         if prediction:
                             # Get recommendation
                             market_sat = str(product['market_saturation']).lower()
@@ -405,7 +379,7 @@ with tab2:
                             
                             recommendation = st.session_state.pricing_strategy.get_competitive_price(
                                 prediction, product['manufacturing_cost'], market_sat, brand_str)
-                            
+                                    
                             if recommendation:
                                 # Add to results
                                 result = {
@@ -448,10 +422,10 @@ with tab2:
                         # Save to JSON format
                         filepath = os.path.join('pricing_strategies', f"batch_pricing_{timestamp}.json")
                         os.makedirs('pricing_strategies', exist_ok=True)
-                        
+                            
                         with open(filepath, 'w') as f:
                             json.dump(results, f, indent=4)
-                        
+                            
                         st.success(f"Results saved to {filepath}")
                         
                         # Add download button
@@ -466,7 +440,7 @@ with tab2:
                                    unsafe_allow_html=True)
                 else:
                     st.error("No valid products to process. Please check your data and try again.")
-                    
+        
         except Exception as e:
             st.error(f"Error processing file: {str(e)}")
 
@@ -781,20 +755,20 @@ with tab5:
         # Explanations
         with st.expander("What do these settings mean?"):
             st.markdown("""
-            **Calibration Factor**: Adjusts price predictions to match real market prices for this category.
-            Higher values mean our model typically underpredicts prices for this category.
+                **Calibration Factor**: Adjusts price predictions to match real market prices for this category.
+                Higher values mean our model typically underpredicts prices for this category.
             
-            **Min Profit Margin**: The minimum acceptable profit margin for this category.
-            Categories with higher brand value can sustain higher margins.
+                **Min Profit Margin**: The minimum acceptable profit margin for this category.
+                Categories with higher brand value can sustain higher margins.
             
-            **Warning Threshold**: When manufacturing cost exceeds this percentage of the median price,
-            pricing flexibility becomes limited. Shows as a warning in recommendations.
+                **Warning Threshold**: When manufacturing cost exceeds this percentage of the median price,
+                pricing flexibility becomes limited. Shows as a warning in recommendations.
             
-            **Viability Threshold**: When manufacturing cost exceeds this percentage of the median price,
-            the product may not be viable at all. Shows as an error in recommendations.
+                **Viability Threshold**: When manufacturing cost exceeds this percentage of the median price,
+                the product may not be viable at all. Shows as an error in recommendations.
             
-            **Q1/Q3 Benchmarks**: 25th and 75th percentile price points for this category.
-            Used to position products in the market and evaluate competitiveness.
+                **Q1/Q3 Benchmarks**: 25th and 75th percentile price points for this category.
+                Used to position products in the market and evaluate competitiveness.
             """)
     else:
         st.error("Pricing strategy not initialized")

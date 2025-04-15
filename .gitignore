@@ -27,9 +27,7 @@ env/
 
 # Logs and data
 *.log
-# Allow model.pkl files but ignore other pickles
 *.pkl
-!models/improved/category_models/*/model.pkl
 .ipynb_checkpoints
 notebooks/.ipynb_checkpoints/
 
