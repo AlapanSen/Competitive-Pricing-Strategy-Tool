@@ -163,9 +163,22 @@ class PricingStrategy:
                             
                         # In flat file structure, create a wrapper object with model and scaler
                         from sklearn.preprocessing import StandardScaler
+                        # Create a no-op scaler (scales by 1, centers at 0)
+                        scaler = StandardScaler()
+                        # Initialize with identity parameters
+                        if hasattr(model, 'feature_names_in_'):
+                            n_features = len(model.feature_names_in_)
+                            scaler.mean_ = np.zeros(n_features)  # No centering
+                            scaler.scale_ = np.ones(n_features)  # No scaling
+                            scaler.var_ = np.ones(n_features)   # Required for scale_
+                            scaler.n_features_in_ = n_features
+                            scaler.n_samples_seen_ = 1
+                            # Store feature names if possible
+                            scaler.feature_names_in_ = model.feature_names_in_
+                        
                         model_data = {
                             'model': model,
-                            'scaler': StandardScaler(),  # Default scaler
+                            'scaler': scaler,
                             'is_log_price': False  # Default value
                         }
                         
@@ -212,7 +225,7 @@ class PricingStrategy:
                 if os.path.exists(path):
                     logger.info(f"Loading benchmarks from {path}")
                     with open(path, 'r') as f:
-                        outlier_stats = json.load(f)
+                        benchmark_data = json.load(f)
                     loaded = True
                     break
             
@@ -230,44 +243,57 @@ class PricingStrategy:
                 
                 logger.info(f"Created default benchmarks for {len(self.category_benchmarks)} categories")
                 return False
-                    
-            # Extract useful benchmark data
-            for category, stats in outlier_stats.items():
-                # Get discounted_price stats
-                if 'discounted_price' in stats:
-                    price_stats = stats['discounted_price']
-                    
-                    q1 = float(price_stats.get('Q1', 0))
-                    q3 = float(price_stats.get('Q3', 0))
-                    
-                    # Calculate median as average of Q1 and Q3 if not provided
-                    if 'median' in price_stats:
-                        median_price = float(price_stats['median'])
-                    else:
-                        median_price = (q1 + q3) / 2 if q1 > 0 and q3 > 0 else 1000.0
-                    
-                    self.category_benchmarks[category] = {
-                        'median_price': median_price,
-                        'q1': q1,
-                        'q3': q3,
-                        'iqr': float(price_stats.get('IQR', q3 - q1)),
-                        'min_price': float(price_stats.get('lower_bound', q1 * 0.5)),
-                        'max_price': float(price_stats.get('upper_bound', q3 * 1.5))
-                    }
-                # If no discounted_price stats, try using overall stats
-                elif isinstance(stats, dict) and all(k in stats for k in ['median', 'Q1', 'Q3']):
-                    median_price = float(stats.get('median', 0))
-                    q1 = float(stats.get('Q1', 0))
-                    q3 = float(stats.get('Q3', 0))
-                    
-                    self.category_benchmarks[category] = {
-                        'median_price': median_price,
-                        'q1': q1,
-                        'q3': q3,
-                        'iqr': float(stats.get('IQR', q3 - q1)),
-                        'min_price': float(stats.get('lower_bound', q1 * 0.5)),
-                        'max_price': float(stats.get('upper_bound', q3 * 1.5))
-                    }
+            
+            # Try to extract benchmarks in different formats
+            # First, check if the data is already in the expected format
+            if isinstance(benchmark_data, dict) and all(
+                isinstance(v, dict) and 'median_price' in v for k, v in benchmark_data.items()
+            ):
+                # Data is already in the right format - use directly
+                self.category_benchmarks = benchmark_data
+                logger.info(f"Loaded benchmarks directly from file - found {len(self.category_benchmarks)} categories")
+                return True
+                
+            # Otherwise, try to extract from outlier_stats format
+            try:
+                for category, stats in benchmark_data.items():
+                    # Get discounted_price stats
+                    if 'discounted_price' in stats:
+                        price_stats = stats['discounted_price']
+                        
+                        q1 = float(price_stats.get('Q1', 0))
+                        q3 = float(price_stats.get('Q3', 0))
+                        
+                        # Calculate median as average of Q1 and Q3 if not provided
+                        if 'median' in price_stats:
+                            median_price = float(price_stats['median'])
+                        else:
+                            median_price = (q1 + q3) / 2 if q1 > 0 and q3 > 0 else 1000.0
+                        
+                        self.category_benchmarks[category] = {
+                            'median_price': median_price,
+                            'q1': q1,
+                            'q3': q3,
+                            'iqr': float(price_stats.get('IQR', q3 - q1)),
+                            'min_price': float(price_stats.get('lower_bound', q1 * 0.5)),
+                            'max_price': float(price_stats.get('upper_bound', q3 * 1.5))
+                        }
+                    # If no discounted_price stats, try using overall stats
+                    elif isinstance(stats, dict) and all(k in stats for k in ['median', 'Q1', 'Q3']):
+                        median_price = float(stats.get('median', 0))
+                        q1 = float(stats.get('Q1', 0))
+                        q3 = float(stats.get('Q3', 0))
+                        
+                        self.category_benchmarks[category] = {
+                            'median_price': median_price,
+                            'q1': q1,
+                            'q3': q3,
+                            'iqr': float(stats.get('IQR', q3 - q1)),
+                            'min_price': float(stats.get('lower_bound', q1 * 0.5)),
+                            'max_price': float(stats.get('upper_bound', q3 * 1.5))
+                        }
+            except Exception as e:
+                logger.error(f"Error parsing benchmark data: {str(e)}")
             
             # If no benchmarks were found, create default ones
             if not self.category_benchmarks:
@@ -343,6 +369,9 @@ class PricingStrategy:
                 
                 # Quality score derived from rating
                 features_df['quality_tier'] = features_df['rating'] / 5.0  # Normalized 0-1
+
+                # Product quality-related features
+                features_df['quality_score'] = features_df['rating'] * 20  # Scale to 0-100
             
             if 'manufacturing_cost' in features_df:
                 # Log transformed cost
@@ -405,6 +434,34 @@ class PricingStrategy:
             
             # Estimate price percentile position (0-1 scale)
             features_df['price_percentile'] = 0.5  # Default to median
+            
+            # Add missing advanced features that the model might expect
+            advanced_features = {
+                'actual_price': features_df['manufacturing_cost'] * features_df['price_to_cost_ratio'],
+                'price_competitiveness_ratio': 1.0,  # Neutral
+                'profit_margin_ratio': features_df['margin_percentage'] / 100.0,
+                'competitor_undercut_potential': 0.5,  # Medium
+                'is_budget_segment': 0,  # Not budget by default
+                'is_mid_segment': 1,     # Mid-segment by default
+                'is_premium_segment': 0, # Not premium by default
+                'customer_attraction_score': 0.6,  # Moderate attraction
+                'feature_to_price_ratio': 1.0,    # Average ratio
+                'tech_value_proposition': 0.5,    # Medium value
+                'relative_to_lowest_quartile': 2.0,  # 2x the lowest quartile
+                'value_adjusted_price': features_df['manufacturing_cost'] * 1.8,  # Adjusted for value
+                'category_price_index': 1.0,  # Average for category
+                'demand_indicator': 0.5,     # Medium demand
+                'brand_power_price_ratio': 1.0,  # Neutral
+                'new_seller_competitive_price': features_df['manufacturing_cost'] * 1.7,  # Competitive for new sellers
+                'sustainable_price': features_df['manufacturing_cost'] * 1.5,  # Sustainable in the market
+                'ideal_customer_attraction_price': features_df['manufacturing_cost'] * 1.6,  # Good for customer attraction
+                'market_penetration_potential': 0.6,  # Medium penetration potential
+                'elasticity_adjusted_value': 0.5  # Medium elasticity adjustment
+            }
+            
+            # Add all advanced features to the DataFrame
+            for feature, value in advanced_features.items():
+                features_df[feature] = value
             
             # Get the features that the model was trained on
             if hasattr(model, 'feature_names_in_'):

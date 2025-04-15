@@ -20,25 +20,43 @@ st.set_page_config(
     layout="wide"
 )
 
-# Initialize session state
+# Initialize session state - try different model paths if one fails
 if 'pricing_strategy' not in st.session_state:
-    st.session_state.pricing_strategy = PricingStrategy(models_dir='models/category_models')
-    # Load benchmarks
-    st.session_state.pricing_strategy.load_category_benchmarks()
-    
-    # Debug info about benchmarks
-    benchmark_info = {
-        "Benchmark Categories": list(st.session_state.pricing_strategy.category_benchmarks.keys()),
-        "Total Categories": len(st.session_state.pricing_strategy.category_benchmarks),
-        "Sample Data": str(list(st.session_state.pricing_strategy.category_benchmarks.values())[:2])
-    }
-    st.sidebar.expander("Debug: Benchmark Data", expanded=False).write(benchmark_info)
-
+    try:
+        # First try with the category_models path (flat file structure)
+        st.session_state.pricing_strategy = PricingStrategy(models_dir='models/category_models')
+        # Load benchmarks
+        st.session_state.pricing_strategy.load_category_benchmarks()
+        
+        # If no models were loaded, try the improved path
+        if not st.session_state.pricing_strategy.models:
+            st.session_state.pricing_strategy = PricingStrategy(models_dir='models/improved/category_models')
+            st.session_state.pricing_strategy.load_category_benchmarks()
+            
+        # Debug info about benchmarks
+        benchmark_info = {
+            "Benchmark Categories": list(st.session_state.pricing_strategy.category_benchmarks.keys()),
+            "Total Categories": len(st.session_state.pricing_strategy.category_benchmarks),
+            "Sample Data": str(list(st.session_state.pricing_strategy.category_benchmarks.values())[:2])
+        }
+        st.sidebar.expander("Debug: Benchmark Data", expanded=False).write(benchmark_info)
+    except Exception as e:
+        st.error(f"Error initializing pricing strategy: {str(e)}")
+        import traceback
+        st.error(traceback.format_exc())
+        
 # Sidebar
 st.sidebar.image("https://github.githubassets.com/images/modules/logos_page/GitHub-Mark.png", width=100)
 st.sidebar.title("Pricing Strategy Tool")
 st.sidebar.markdown("### For New Sellers")
 st.sidebar.markdown("This tool helps new sellers enter the market with competitive pricing strategies.")
+
+# Create app version info in sidebar
+st.sidebar.markdown("---")
+st.sidebar.markdown("### App Info")
+st.sidebar.markdown(f"**Version:** 1.0.0")
+st.sidebar.markdown(f"**Models Loaded:** {len(st.session_state.pricing_strategy.models)}")
+st.sidebar.markdown(f"**Categories Available:** {len(st.session_state.pricing_strategy.category_benchmarks)}")
 
 # Get available categories
 available_categories = list(st.session_state.pricing_strategy.models.keys())
